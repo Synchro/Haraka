@@ -1,6 +1,6 @@
 // Proxy AUTH requests selectively by domain
 var sock  = require('./line_socket');
-var utils = require('./utils');
+var utils = require('haraka-utils');
 var smtp_regexp = /^([0-9]{3})([ -])(.*)/;
 
 exports.register = function () {
@@ -8,7 +8,7 @@ exports.register = function () {
 };
 
 exports.hook_capabilities = function (next, connection) {
-    if (connection.using_tls) {
+    if (connection.tls.enabled) {
         var methods = [ 'PLAIN', 'LOGIN' ];
         connection.capabilities.push('AUTH ' + methods.join(' '));
         connection.notes.allowed_auth_methods = methods;
@@ -74,7 +74,8 @@ exports.try_auth_proxy = function (connection, hosts, user, passwd, cb) {
     });
     socket.on('error', function (err) {
         connection.logerror(self, "connection failed to host " + host + ": " + err);
-        return self.try_auth_proxy(connection, hosts, user, passwd, cb);
+        socket.end();
+        return;
     });
     socket.send_command = function (cmd, data) {
         var line = cmd + (data ? (' ' + data) : '');
@@ -90,19 +91,18 @@ exports.try_auth_proxy = function (connection, hosts, user, passwd, cb) {
     socket.on('line', function (line) {
         connection.logprotocol(self, "S: " + line);
         var matches = smtp_regexp.exec(line);
-        if (!matches) return;
+        if (!matches) {
+            connection.logerror(self, "unrecognised response: " + line);
+            socket.end();
+            return;
+        }
 
         var code = matches[1];
         var cont = matches[2];
         var rest = matches[3];
         response.push(rest);
 
-        if (cont !== ' ') {
-            // Unrecognized response.
-            connection.logerror(self, "unrecognized response: " + line);
-            socket.end();
-            return;
-        }
+        if (cont !== ' ') return;
 
         connection.logdebug(self, 'command state: ' + command);
         if (command === 'ehlo') {

@@ -2,7 +2,7 @@
 // Call spamassassin via spamd
 
 var sock  = require('./line_socket');
-var utils = require('./utils');
+var utils = require('haraka-utils');
 
 exports.register = function () {
     var plugin = this;
@@ -11,7 +11,11 @@ exports.register = function () {
 
 exports.load_spamassassin_ini = function () {
     var plugin = this;
-    plugin.cfg = plugin.config.get('spamassassin.ini', function () {
+    plugin.cfg = plugin.config.get('spamassassin.ini', {
+        booleans: [
+            '+add_headers',
+        ],
+    }, function () {
         plugin.load_spamassassin_ini();
     });
 
@@ -27,8 +31,10 @@ exports.load_spamassassin_ini = function () {
         plugin.cfg.main[key] = defaults[key];
     }
 
-    ['reject_threshold', 'relay_reject_threshold',
-    'munge_subject_threshold', 'max_size'].forEach(function (item) {
+    [
+        'reject_threshold', 'relay_reject_threshold',
+        'munge_subject_threshold', 'max_size'
+    ].forEach(function (item) {
         if (!plugin.cfg.main[item]) return;
         plugin.cfg.main[item] = Number(plugin.cfg.main[item]);
     });
@@ -181,6 +187,8 @@ exports.do_header_updates = function (connection, spamd_response) {
     }
 
     var modern = plugin.cfg.main.modern_status_syntax;
+    if ( !plugin.cfg.main.add_headers ) return;
+
     for (var key in spamd_response.headers) {
         if (!key || key === '' || key === undefined) continue;
         var val = spamd_response.headers[key];
@@ -213,7 +221,7 @@ exports.score_too_high = function (connection, spamd_response) {
     return false;
 };
 
-exports.get_spamd_username = function(connection) {
+exports.get_spamd_username = function (connection) {
     var plugin = this;
 
     var user = connection.transaction.notes.spamd_user;  // 1st priority
@@ -236,7 +244,7 @@ exports.get_spamd_username = function(connection) {
     return user;
 };
 
-exports.get_spamd_headers = function(connection, username) {
+exports.get_spamd_headers = function (connection, username) {
     // http://svn.apache.org/repos/asf/spamassassin/trunk/spamd/PROTOCOL
     var headers = [
         'HEADERS SPAMC/1.3',
@@ -251,7 +259,7 @@ exports.get_spamd_headers = function(connection, username) {
     return headers;
 };
 
-exports.get_spamd_socket = function(next, connection, headers) {
+exports.get_spamd_socket = function (next, connection, headers) {
     var plugin = this;
     // TODO: support multiple spamd backends
 
@@ -303,7 +311,7 @@ exports.get_spamd_socket = function(next, connection, headers) {
     return socket;
 };
 
-exports.msg_too_big = function(connection) {
+exports.msg_too_big = function (connection) {
     var plugin = this;
     if (!plugin.cfg.main.max_size) return false;
 
@@ -316,7 +324,7 @@ exports.msg_too_big = function(connection) {
     return true;
 };
 
-exports.log_results = function(connection, spamd_response) {
+exports.log_results = function (connection, spamd_response) {
     var plugin = this;
     var cfg = plugin.cfg.main;
     connection.loginfo(plugin, "status=" + spamd_response.flag +

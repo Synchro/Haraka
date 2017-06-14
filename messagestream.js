@@ -1,54 +1,54 @@
-// MessageStream class
+'use strict';
 
-var fs = require('fs');
-var util = require('util');
+var fs     = require('fs');
 var Stream = require('stream').Stream;
+var utils  = require('haraka-utils');
+
 var ChunkEmitter = require('./chunkemitter');
-var indexOfLF = require('./utils').indexOfLF;
 
 var STATE_HEADERS = 1;
 var STATE_BODY = 2;
 
-function MessageStream (config, id, headers) {
-    if (!id) throw new Error('id required');
-    Stream.call(this);
-    this.uuid = id;
-    this.write_ce = null;
-    this.read_ce = null;
-    this.bytes_read = 0;
-    this.state = STATE_HEADERS;
-    this.idx = {};
-    this.end_called = false;
-    this.end_callback = null;
-    this.buffered = 0;
-    this._queue = [];
-    this.max_data_inflight = 0;
-    this.buffer_max = (!isNaN(config.main.spool_after) ?
-                       Number(config.main.spool_after) : -1);
-    this.spooling = false;
-    this.fd = null;
-    this.open_pending = false;
-    this.spool_dir = config.main.spool_dir || '/tmp';
-    this.filename = this.spool_dir + '/' + id + '.eml';
-    this.write_pending = false;
+class MessageStream extends Stream {
+    constructor (config, id, headers) {
+        super();
+        if (!id) throw new Error('id required');
+        this.uuid = id;
+        this.write_ce = null;
+        this.read_ce = null;
+        this.bytes_read = 0;
+        this.state = STATE_HEADERS;
+        this.idx = {};
+        this.end_called = false;
+        this.end_callback = null;
+        this.buffered = 0;
+        this._queue = [];
+        this.max_data_inflight = 0;
+        this.buffer_max = (!isNaN(config.main.spool_after) ?
+                        Number(config.main.spool_after) : -1);
+        this.spooling = false;
+        this.fd = null;
+        this.open_pending = false;
+        this.spool_dir = config.main.spool_dir || '/tmp';
+        this.filename = this.spool_dir + '/' + id + '.eml';
+        this.write_pending = false;
 
-    this.readable = true;
-    this.paused = false;
-    this.headers = headers || [];
-    this.headers_done = false;
-    this.headers_found_eoh = false;
-    this.line_endings = "\r\n";
-    this.dot_stuffing = false;
-    this.ending_dot = false;
-    this.buffer_size = (1024 * 64);
-    this.start = 0;
-    this.write_complete = false;
-    this.ws = null;
-    this.rs = null;
-    this.in_pipe = false;
+        this.readable = true;
+        this.paused = false;
+        this.headers = headers || [];
+        this.headers_done = false;
+        this.headers_found_eoh = false;
+        this.line_endings = "\r\n";
+        this.dot_stuffing = false;
+        this.ending_dot = false;
+        this.buffer_size = (1024 * 64);
+        this.start = 0;
+        this.write_complete = false;
+        this.ws = null;
+        this.rs = null;
+        this.in_pipe = false;
+    }
 }
-
-util.inherits(MessageStream, Stream);
 
 MessageStream.prototype.add_line = function (line) {
     var self = this;
@@ -139,7 +139,7 @@ MessageStream.prototype._write = function (data) {
         // Do we have any waiting readers?
         if (this.listeners('data').length && !this.write_complete) {
             this.write_complete = true;
-            process.nextTick(function () {
+            setImmediate(function () {
                 if (self.readable && !self.paused)
                     self._read();
             });
@@ -166,7 +166,7 @@ MessageStream.prototype._write = function (data) {
         this.ws.on('open', function (fd) {
             self.fd = fd;
             self.open_pending = false;
-            process.nextTick(function () {
+            setImmediate(function () {
                 self._write();
             });
         });
@@ -183,7 +183,7 @@ MessageStream.prototype._write = function (data) {
         this.write_pending = true;
         this.ws.once('drain', function () {
             self.write_pending = false;
-            process.nextTick(function () {
+            setImmediate(function () {
                 self._write();
             });
         });
@@ -222,13 +222,13 @@ MessageStream.prototype._read = function () {
     // loop around again (and check for pause).
     if (this.headers.length && !this.headers_done) {
         this.headers_done = true;
-        for (var i=0; i<this.headers.length; i++) {
+        for (let i=0; i<this.headers.length; i++) {
             this.read_ce.fill(this.headers[i].replace(/\r?\n/g,this.line_endings));
         }
         // Add end of headers marker
         this.read_ce.fill(this.line_endings);
         // Loop
-        process.nextTick(function () {
+        setImmediate(function () {
             if (self.readable && !self.paused)
                 self._read();
         });
@@ -239,7 +239,7 @@ MessageStream.prototype._read = function () {
         // create a queue file, so we read from memory.
         if (this._queue.length > 0) {
             // TODO: implement start/end offsets
-            for (var i=0; i<this._queue.length; i++) {
+            for (let i=0; i<this._queue.length; i++) {
                 this.process_buf(this._queue[i].slice(0));
             }
             this._read_finish();
@@ -263,7 +263,7 @@ MessageStream.prototype._read = function () {
 
 MessageStream.prototype.process_buf = function (buf) {
     var offset = 0;
-    while ((offset = indexOfLF(buf)) !== -1) {
+    while ((offset = utils.indexOfLF(buf)) !== -1) {
         var line = buf.slice(0, offset+1);
         buf = buf.slice(line.length);
         // Don't output headers if they where sent already
@@ -355,7 +355,7 @@ MessageStream.prototype.pipe = function (destination, options) {
     // Stream won't be readable until we've finished writing and add_line_end() has been called.
     // As we've registered for events above, the _write() function can now detect that we
     // are waiting for the data and will call _read() automatically when it is finished.
-    if (!this.write_complete) return;
+    if (!this.write_complete) return destination;
     // Create this.fd only if it doesn't already exist
     // This is so we can re-use the already open descriptor
     if (!this.fd && !(this._queue.length > 0)) {
@@ -414,14 +414,14 @@ MessageStream.prototype.get_data = function (options, cb) { // Or: (cb)
 
 module.exports = MessageStream;
 
-
-function GetDataStream (cb) {
-    this.cb = cb;
-    this.buf = '';
-    this.writable = true;
+class GetDataStream extends Stream {
+    constructor (cb) {
+        super();
+        this.cb = cb;
+        this.buf = '';
+        this.writable = true;
+    }
 }
-
-util.inherits(GetDataStream, Stream);
 
 GetDataStream.prototype.write = function (obj, enc) {
     this.buf += obj;

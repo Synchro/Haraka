@@ -48,7 +48,6 @@ logger.colors = {
 var stdout_is_tty = tty.isatty(process.stdout.fd);
 
 logger.colorize = function (color, str) {
-    if (!util.inspect.colors) { return str; }  // node util before Nov 2013
     if (!util.inspect.colors[color]) { return str; }  // unknown color
     return '\u001b[' + util.inspect.colors[color][0] + 'm' + str +
            '\u001b[' + util.inspect.colors[color][1] + 'm';
@@ -57,28 +56,30 @@ logger.colorize = function (color, str) {
 logger.dump_logs = function (cb) {
     while (logger.deferred_logs.length > 0) {
         var log_item = logger.deferred_logs.shift();
-        var color = logger.colors[log_item.level];
-        if (color && stdout_is_tty) {
-            console.log(logger.colorize(color,log_item.data));
-        }
-        else {
-            console.log(log_item.data);
-        }
+        plugins.run_hooks('log', logger, log_item);
     }
     // Run callback after flush
     if (cb) process.stdout.write('', cb);
     return true;
 };
 
+if (!util.isFunction) {
+    util.isFunction = function (functionToCheck) {
+        var getType = {};
+        return functionToCheck && getType.toString.call(functionToCheck) === '[object Function]';
+    };
+}
+
 logger.dump_and_exit = function (code) {
     this.dump_logs(function () {
+        if (util.isFunction(code)) return code();
         process.exit(code);
     });
 }
 
 logger.log = function (level, data) {
     if (level === 'PROTOCOL') {
-        data = data.replace(/\n/g, '\\n\n');
+        data = data.replace(/\n/g, '\\n');
     }
     data = data.replace(/\r/g, '\\r')
                .replace(/\n$/, '');
@@ -132,6 +133,7 @@ logger._init_loglevel = function () {
             logger.loglevel = loglevel_num;
         }
         if (!logger.loglevel) {
+            this.log('WARN', 'invalid loglevel: ' + _loglevel + ' defaulting to LOGWARN');
             logger.loglevel = logger.LOGWARN;
         }
     }
@@ -151,7 +153,7 @@ logger._init_timestamps = function () {
     });
 
     if (_timestamps) {
-        console.log = function() {
+        console.log = function () {
             var new_arguments = [new Date().toISOString()];
             for (var key in arguments) {
                 new_arguments.push(arguments[key]);
@@ -168,7 +170,7 @@ logger._init_loglevel();
 logger._init_timestamps();
 
 logger.log_if_level = function (level, key, plugin) {
-    return function() {
+    return function () {
         if (logger.loglevel < logger[key]) { return; }
         var levelstr = '[' + level + ']';
         var str = '';

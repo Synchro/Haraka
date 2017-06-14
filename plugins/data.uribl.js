@@ -6,8 +6,8 @@ var dns       = require('dns');
 var net       = require('net');
 var tlds      = require('haraka-tld');
 
-var net_utils = require('./net_utils');
-var utils     = require('./utils');
+var net_utils = require('haraka-net-utils');
+var utils     = require('haraka-utils');
 
 // Default regexps to extract the URIs from the message
 var numeric_ip = /\w{3,16}:\/+(\S+@)?(\d+|0[xX][0-9A-Fa-f]+)\.(\d+|0[xX][0-9A-Fa-f]+)\.(\d+|0[xX][0-9A-Fa-f]+)\.(\d+|0[xX][0-9A-Fa-f]+)/gi;
@@ -53,7 +53,7 @@ exports.load_uri_config = function (next) {
     lists = this.config.get('data.uribl.ini');
     zones = Object.keys(lists);
     if (!zones || zones.length <= 1) {
-        this.logerr('aborting: no zones configured');
+        this.logerror('aborting: no zones configured');
         return next();
     }
     // Load excludes
@@ -282,7 +282,7 @@ exports.do_lookups = function (connection, next, hosts, type) {
 exports.hook_lookup_rdns = function (next, connection) {
     this.load_uri_config(next);
     var plugin = this;
-    dns.reverse(connection.remote_ip, function (err, rdns) {
+    dns.reverse(connection.remote.ip, function (err, rdns) {
         if (err) {
             if (err.code) {
                 if (err.code === dns.NXDOMAIN) return next();
@@ -328,8 +328,8 @@ exports.hook_data_post = function (next, connection) {
     // From header
     var do_from_header = function (cb) {
         var from = trans.header.get('from');
-        var fmatch;
-        if (fmatch = email_re.exec(from)) {
+        var fmatch = email_re.exec(from);
+        if (fmatch) {
             return plugin.do_lookups(connection, cb, fmatch[1], 'from');
         }
         cb();
@@ -383,7 +383,7 @@ function extract_urls (urls, body, connection, self) {
 
     var uri;
     // extract numeric URIs
-    while (match = numeric_ip.exec(body.bodytext)) {
+    while ((match = numeric_ip.exec(body.bodytext))) {
         try {
             uri = url.parse(match[0]);
             // Don't reverse the IPs here; we do it in the lookup
@@ -396,7 +396,7 @@ function extract_urls (urls, body, connection, self) {
     }
 
     // match plain hostname.tld
-    while (match = schemeless.exec(body.bodytext)) {
+    while ((match = schemeless.exec(body.bodytext))) {
         try {
             uri = url.parse('http://' + match[1]);
             urls[uri.hostname] = uri;
@@ -408,7 +408,7 @@ function extract_urls (urls, body, connection, self) {
     }
 
     // match scheme:// URI
-    while (match = schemed.exec(body.bodytext)) {
+    while ((match = schemed.exec(body.bodytext))) {
         try {
             uri = url.parse(match[1]);
             urls[uri.hostname] = uri;

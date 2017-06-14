@@ -4,7 +4,7 @@
 // mail_from.blocklist plugin for this to work fully.
 
 var fs = require('fs');
-var utils = require('./utils');
+var utils = require('haraka-utils');
 
 exports.hook_data = function (next, connection) {
     // enable mail body parsing
@@ -73,7 +73,7 @@ exports.hook_queue = function (next, connection) {
 }
 
 // Example: From: 	Site Tucano Gold <contato@tucanogold.com.br>
-function extract_from_line(body) {
+function extract_from_line (body) {
     var matches = body.bodytext.match(/\bFrom:[^<\n]*<([^>\n]*)>/);
     if (matches) {
         return matches[1];

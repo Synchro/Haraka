@@ -11,7 +11,7 @@ var _set_up = function (done) {
     this.plugin.config.root_path = path.resolve(__dirname, '../../config');
 
     this.connection = fixtures.connection.createConnection();
-    this.connection.remote_ip='208.75.199.19';
+    this.connection.remote.ip='208.75.199.19';
 
     this.plugin.register();
 
@@ -37,12 +37,11 @@ exports.host_mismatch = {
         var outer = this;
         var cb = function () {
             test.equal(undefined, arguments[0]);
-            // console.log(outer.connection.results.get('helo.checks'));
             test.ok(outer.connection.results.get('helo.checks').fail.length);
         };
         this.plugin.init(stub, this.connection, 'helo.example.com');
-        this.plugin.cfg.check.mismatch=true;
-        this.plugin.cfg.reject.mismatch=false;
+        this.plugin.cfg.check.host_mismatch=true;
+        this.plugin.cfg.reject.host_mismatch=false;
         this.plugin.host_mismatch(cb, this.connection, 'anything');
         test.done();
     },
@@ -55,8 +54,8 @@ exports.host_mismatch = {
             test.ok(outer.connection.results.get('helo.checks').fail.length);
         };
         this.plugin.init(stub, this.connection, 'helo.example.com');
-        this.plugin.cfg.check.mismatch=true;
-        this.plugin.cfg.reject.mismatch=true;
+        this.plugin.cfg.check.host_mismatch=true;
+        this.plugin.cfg.reject.host_mismatch=true;
         this.plugin.host_mismatch(cb, this.connection, 'anything');
         test.done();
     },
@@ -121,7 +120,7 @@ exports.rdns_match = {
             test.ok(outer.connection.results.get('helo.checks').pass.length);
         };
         this.plugin.init(stub, this.connection, 'helo.example.com');
-        this.connection.remote_host='helo.example.com';
+        this.connection.remote.host='helo.example.com';
         this.plugin.cfg.check.rdns_match=true;
         this.plugin.cfg.reject.rdns_match=true;
         this.plugin.rdns_match(cb, this.connection, 'helo.example.com');
@@ -136,7 +135,7 @@ exports.rdns_match = {
             test.ok(outer.connection.results.get('helo.checks').pass.length);
         };
         this.plugin.init(stub, this.connection, 'helo.example.com');
-        this.connection.remote_host='ehlo.example.com';
+        this.connection.remote.host='ehlo.example.com';
         this.plugin.cfg.check.rdns_match=true;
         this.plugin.cfg.reject.rdns_match=false;
         this.plugin.rdns_match(cb, this.connection, 'helo.example.com');
@@ -151,7 +150,7 @@ exports.rdns_match = {
             test.ok(outer.connection.results.get('helo.checks').fail.length);
         };
         this.plugin.init(stub, this.connection, 'helo.example.com');
-        this.connection.remote_host='ehlo.gmail.com';
+        this.connection.remote.host='ehlo.gmail.com';
         this.plugin.cfg.check.rdns_match=true;
         this.plugin.cfg.reject.rdns_match=false;
         this.plugin.rdns_match(cb, this.connection, 'helo.example.com');
@@ -166,7 +165,7 @@ exports.rdns_match = {
             test.ok(outer.connection.results.get('helo.checks').fail.length);
         };
         this.plugin.init(stub, this.connection, 'helo.example.com');
-        this.connection.remote_host='ehlo.gmail.com';
+        this.connection.remote.host='ehlo.gmail.com';
         this.plugin.cfg.check.rdns_match=true;
         this.plugin.cfg.reject.rdns_match=true;
         this.plugin.rdns_match(cb, this.connection, 'helo.example.com');
@@ -228,7 +227,7 @@ exports.dynamic = {
             test.equal(undefined, arguments[0]);
             test.ok(outer.connection.results.get('helo.checks').pass.length);
         };
-        this.connection.remote_ip='208.75.177.99';
+        this.connection.remote.ip='208.75.177.99';
         this.plugin.init(stub, this.connection, test_helo);
         this.plugin.cfg.check.dynamic=true;
         this.plugin.cfg.reject.dynamic=true;
@@ -244,7 +243,7 @@ exports.dynamic = {
             // console.log(outer.connection.results.get('helo.checks'));
             test.ok(outer.connection.results.get('helo.checks').fail.length);
         };
-        this.connection.remote_ip='76.121.96.159';
+        this.connection.remote.ip='76.121.96.159';
         this.plugin.init(stub, this.connection, test_helo);
         this.plugin.cfg.check.dynamic=true;
         this.plugin.cfg.reject.dynamic=false;
@@ -260,7 +259,7 @@ exports.dynamic = {
             // console.log(outer.connection.results.get('helo.checks'));
             test.ok(outer.connection.results.get('helo.checks').fail.length);
         };
-        this.connection.remote_ip='76.121.96.159';
+        this.connection.remote.ip='76.121.96.159';
         this.plugin.init(stub, this.connection, test_helo);
         this.plugin.cfg.check.dynamic=true;
         this.plugin.cfg.reject.dynamic=true;
@@ -280,7 +279,7 @@ exports.big_company = {
             test.ok(outer.connection.results.get('helo.checks').pass.length);
             test.done();
         };
-        this.connection.remote_host='yahoo.com';
+        this.connection.remote.host='yahoo.com';
         this.plugin.init(stub, this.connection, test_helo);
         this.plugin.cfg.check.big_company=true;
         this.plugin.cfg.reject.big_company=true;
@@ -295,7 +294,8 @@ exports.big_company = {
             test.ok(outer.connection.results.get('helo.checks').fail.length);
             test.done();
         };
-        this.connection.remote_host='anything-else.com';
+        this.connection.remote.host='anything-else.com';
+        this.connection.remote.is_private=false;
         this.plugin.init(stub, this.connection, test_helo);
         this.plugin.cfg.check.big_company=true;
         this.plugin.cfg.reject.big_company=false;
@@ -310,7 +310,7 @@ exports.big_company = {
             test.ok(outer.connection.results.get('helo.checks').fail.length);
             test.done();
         };
-        this.connection.remote_host='anything-else.com';
+        this.connection.remote.host='anything-else.com';
         this.plugin.init(stub, this.connection, test_helo);
         this.plugin.cfg.check.big_company=true;
         this.plugin.cfg.reject.big_company=true;
@@ -330,7 +330,8 @@ exports.literal_mismatch = {
             test.ok(outer.connection.results.get('helo.checks').skip.length);
             test.done();
         };
-        this.connection.remote_ip='10.0.1.1';
+        this.connection.remote.ip='10.0.1.1';
+        this.connection.remote.is_private=true;
         this.plugin.init(stub, this.connection, test_helo);
         this.plugin.cfg.check.literal_mismatch=1;
         this.plugin.cfg.reject.literal_mismatch=true;
@@ -346,7 +347,8 @@ exports.literal_mismatch = {
             test.ok(outer.connection.results.get('helo.checks').skip.length);
             test.done();
         };
-        this.connection.remote_ip='10.0.1.2';
+        this.connection.remote.ip='10.0.1.2';
+        this.connection.remote.is_private=true;
         this.plugin.init(stub, this.connection, test_helo);
         this.plugin.cfg.check.literal_mismatch=2;
         this.plugin.cfg.reject.literal_mismatch=true;
@@ -357,12 +359,12 @@ exports.literal_mismatch = {
         var outer = this;
         var test_helo = '[10.0.1.1]';
         var cb = function () {
-            // console.log(outer.connection.results.get('helo.checks'));
             test.equal(undefined, arguments[0]);
             test.ok(outer.connection.results.get('helo.checks').skip.length);
             test.done();
         };
-        this.connection.remote_ip='10.0.1.2';
+        this.connection.remote.ip='10.0.1.2';
+        this.connection.remote.is_private=true;
         this.plugin.init(stub, this.connection, test_helo);
         this.plugin.cfg.check.literal_mismatch=0;
         this.plugin.cfg.reject.literal_mismatch=false;
@@ -373,12 +375,12 @@ exports.literal_mismatch = {
         var outer = this;
         var test_helo = '[10.0.1.1]';
         var cb = function () {
-            // console.log(outer.connection.results.get('helo.checks'));
             test.equal(undefined, arguments[0]);
             test.ok(outer.connection.results.get('helo.checks').skip.length);
             test.done();
         };
-        this.connection.remote_ip='10.0.1.2';
+        this.connection.remote.ip='10.0.1.2';
+        this.connection.remote.is_private=true;
         this.plugin.init(stub, this.connection, test_helo);
         this.plugin.cfg.check.literal_mismatch=0;
         this.plugin.cfg.reject.literal_mismatch=true;
@@ -448,7 +450,7 @@ exports.forward_dns = {
             test.ok(outer.connection.results.get('helo.checks').pass.length);
             test.done();
         };
-        this.connection.remote_ip='4.2.2.2';
+        this.connection.remote.ip='4.2.2.2';
         this.plugin.init(stub, this.connection, test_helo);
         this.plugin.cfg.check.forward_dns=true;
         this.plugin.cfg.reject.forward_dns=true;
@@ -465,7 +467,7 @@ exports.forward_dns = {
             test.ok(outer.connection.results.get('helo.checks').fail.length);
             test.done();
         };
-        this.connection.remote_ip='66.128.51.163';
+        this.connection.remote.ip='66.128.51.163';
         this.plugin.init(stub, this.connection, test_helo);
         this.plugin.cfg.check.forward_dns=true;
         this.plugin.cfg.reject.forward_dns=false;
@@ -482,7 +484,7 @@ exports.forward_dns = {
             test.ok(outer.connection.results.get('helo.checks').fail.length);
             test.done();
         };
-        this.connection.remote_ip='66.128.51.163';
+        this.connection.remote.ip='66.128.51.163';
         this.plugin.init(stub, this.connection, test_helo);
         this.plugin.cfg.check.forward_dns=true;
         this.plugin.cfg.reject.forward_dns=true;

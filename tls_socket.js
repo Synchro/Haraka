@@ -4,28 +4,34 @@
 /*----------------------------------------------------------------------------------------------*/
 
 var tls       = require('tls');
-var constants = require('constants');
-var crypto    = require('crypto');
 var util      = require('util');
 var net       = require('net');
 var stream    = require('stream');
 var log       = require('./logger');
-var config    = require('./config');
+var EventEmitter = require('events');
+
+var ocsp;
+try {
+    ocsp = require('ocsp');
+}
+catch (er) {
+    log.lognotice("Can't load module ocsp. OCSP Stapling not available.");
+}
 
 // provides a common socket for attaching
 // and detaching from either main socket, or crypto socket
-function pluggableStream(socket) {
-    stream.Stream.call(this);
-    this.readable = this.writable = true;
-    this._timeout = 0;
-    this._keepalive = false;
-    this._writeState = true;
-    this._pending = [];
-    this._pendingCallbacks = [];
-    if (socket) this.attach(socket);
+class pluggableStream extends stream.Stream {
+    constructor (socket) {
+        super();
+        this.readable = this.writable = true;
+        this._timeout = 0;
+        this._keepalive = false;
+        this._writeState = true;
+        this._pending = [];
+        this._pendingCallbacks = [];
+        if (socket) this.attach(socket);
+    }
 }
-
-util.inherits(pluggableStream, stream.Stream);
 
 pluggableStream.prototype.pause = function () {
     if (this.targetsocket.pause) {
@@ -69,7 +75,7 @@ pluggableStream.prototype.attach = function (socket) {
     self.targetsocket.on('drain', function () {
         self.emit('drain');
     });
-    self.targetsocket.on('error', function (exception) {
+    self.targetsocket.once('error', function (exception) {
         self.writable = self.targetsocket.writable;
         self.emit('error', exception);
     });
@@ -131,39 +137,97 @@ pluggableStream.prototype.setKeepAlive = function (bool) {
 pluggableStream.prototype.setNoDelay = function (/* true||false */) {
 };
 
+pluggableStream.prototype.unref = function () {
+    return this.targetsocket.unref();
+};
+
 pluggableStream.prototype.setTimeout = function (timeout) {
     this._timeout = timeout;
     return this.targetsocket.setTimeout(timeout);
 };
 
-function pipe(pair, socket) {
-    pair.encrypted.pipe(socket);
-    socket.pipe(pair.encrypted);
-
-    pair.fd = socket.fd;
-    var cleartext = pair.cleartext;
+function pipe (cleartext, socket) {
     cleartext.socket = socket;
-    cleartext.encrypted = pair.encrypted;
-    cleartext.authorized = false;
 
-    function onerror(e) {
-        if (cleartext._controlReleased) {
-            cleartext.emit('error', e);
-        }
+    function onerror (e) {
     }
 
-    function onclose() {
+    function onclose () {
         socket.removeListener('error', onerror);
         socket.removeListener('close', onclose);
     }
 
     socket.on('error', onerror);
     socket.on('close', onclose);
-
-    return cleartext;
 }
 
-function createServer(cb) {
+class pseudoTLSServer extends EventEmitter {
+    constructor () {
+        super();
+    }
+}
+
+if (ocsp) {
+
+    var ocspCache = new ocsp.Cache();
+    var pseudoServ = new pseudoTLSServer();
+
+    pseudoServ.on('OCSPRequest', function (cert, issuer, cb2) {
+        ocsp.getOCSPURI(cert, function (err, uri) {
+            log.logdebug('OCSP Request, URI: ' + uri + ', err=' +err);
+            if (err) {
+                return cb2(err);
+            }
+            if (uri === null) {   // not working OCSP server
+                return cb2();
+            }
+
+            var req = ocsp.request.generate(cert, issuer);
+            var options = {
+                url: uri,
+                ocsp: req.data
+            };
+
+            // look for a cached value first
+            ocspCache.probe(req.id, function (_x, result) {
+                log.logdebug('OCSP cache result: ' + util.inspect(result));
+                if (result) {
+                    cb2(_x, result.response);
+                } else {
+                    log.logdebug('OCSP req:' + util.inspect(req));
+                    ocspCache.request(req.id, options, cb2);
+                }
+            });
+        });
+    });
+
+    exports.shutdown = function () {
+        log.logdebug('Cleaning ocspCache. How many keys? ' + Object.keys(ocspCache.cache).length);
+        Object.keys(ocspCache.cache).forEach(function (key) {
+            var e = ocspCache.cache[key];
+            clearTimeout(e.timer);
+        });
+    };
+}
+
+exports.ocsp = ocsp;
+
+function _getSecureContext (options) {
+    if (options === undefined) options = {};
+
+    if (options.requestCert === undefined) options.requestCert = true;
+
+    if (options.rejectUnauthorized === undefined) {
+        options.rejectUnauthorized = false;
+    }
+
+    if (!options.sessionIdContext) options.sessionIdContext = 'haraka';
+    // if (!options.sessionTimeout) options.sessionTimeout = 1;
+
+    return tls.createSecureContext(options);
+}
+
+function createServer (cb) {
     var serv = net.createServer(function (cryptoSocket) {
 
         var socket = new pluggableStream(cryptoSocket);
@@ -174,74 +238,35 @@ function createServer(cb) {
             socket.clean();
             cryptoSocket.removeAllListeners('data');
 
-            // Set SSL_OP_ALL for maximum compatibility with broken clients
-            // See http://www.openssl.org/docs/ssl/SSL_CTX_set_options.html
             if (!options) options = {};
-            // TODO: bug in Node means we can't do this until it's fixed
-            // options.secureOptions = constants.SSL_OP_ALL;
+            options.isServer = true;
 
-            // Setting secureProtocol to 'SSLv23_method' and secureOptions to
-            // constants.SSL_OP_NO_SSLv2/3 are used to disable SSLv2 and SSLv3
-            // protocol support, to prevent DROWN and POODLE attacks at least.
-            // Node's docs here are super unhelpful, e.g.
-            // <https://nodejs.org/api/tls.html#tls_tls_createserver_options_secureconnectionlistener>
-            // doesn't even mention secureOptions.  Some digging reveals the
-            // relevant openssl docs: secureProtocol is documented in
-            // <https://www.openssl.org/docs/manmaster/ssl/ssl.html#DEALING-WITH-PROTOCOL-METHODS>,
-            // (note: you'll want to select the correct openssl version that
-            // node was compiled against, instead of master), and secureOptions
-            // are documented in
-            // <https://www.openssl.org/docs/manmaster/ssl/SSL_CTX_set_options.html>
-            // (again, select the appropriate openssl version, not master).
-            // One caveat: it doesn't seem like all options are actually
-            // compiled into node.  To see which ones are, fire up node and
-            // examine the object returned by require('constants').
-
-            options.secureProtocol = options.secureProtocol || 'SSLv23_method';
-            options.secureOptions = options.secureOptions |
-                    constants.SSL_OP_NO_SSLv2 | constants.SSL_OP_NO_SSLv3;
-
-            var requestCert = true;
-            var rejectUnauthorized = false;
-            if (options) {
-                if (options.requestCert !== undefined) {
-                    requestCert = options.requestCert;
-                }
-                if (options.rejectUnauthorized !== undefined) {
-                    rejectUnauthorized = options.rejectUnauthorized;
-                }
+            if (!options.secureContext) {
+                options.secureContext = _getSecureContext(options);
             }
-            var sslcontext = (tls.createSecureContext || crypto.createCredentials)(options);
 
-            // tls.createSecurePair(credentials, isServer, requestCert, rejectUnauthorized)
-            var pair = tls.createSecurePair(sslcontext, true, requestCert, rejectUnauthorized);
+            if (options.enableOCSPStapling && ocsp) {
+                options.server = pseudoServ;
+                pseudoServ._sharedCreds = options.secureContext;
+            }
 
-            var cleartext = pipe(pair, cryptoSocket);
+            var cleartext = new tls.TLSSocket(cryptoSocket, options);
 
-            pair.on('error', function(exception) {
+            pipe(cleartext, cryptoSocket);
+
+            cleartext.on('error', function (exception) {
                 socket.emit('error', exception);
             });
 
-            pair.on('secure', function() {
-                var verifyError = (pair.ssl || pair._ssl).verifyError();
-
+            cleartext.on('secure', function () {
                 log.logdebug('TLS secured.');
-                if (verifyError) {
-                    cleartext.authorized = false;
-                    cleartext.authorizationError = verifyError;
-                }
-                else {
-                    cleartext.authorized = true;
-                }
-                var cert = pair.cleartext.getPeerCertificate();
-                if (pair.cleartext.getCipher) {
-                    var cipher = pair.cleartext.getCipher();
-                }
                 socket.emit('secure');
-                if (cb2) cb2(cleartext.authorized, verifyError, cert, cipher);
+                if (cb2) cb2(cleartext.authorized,
+                    cleartext.authorizationError,
+                    cleartext.getPeerCertificate(),
+                    cleartext.getCipher()
+                    );
             });
-
-            cleartext._controlReleased = true;
 
             socket.cleartext = cleartext;
 
@@ -260,17 +285,6 @@ function createServer(cb) {
     return serv;
 }
 
-if (require('semver').gt(process.version, '0.7.0')) {
-    var _net_connect = function (options) {
-        return net.connect(options);
-    };
-}
-else {
-    var _net_connect = function (options) {
-        return net.connect(options.port, options.host);
-    };
-}
-
 function connect (port, host, cb) {
     var conn_options = {};
     if (typeof port === 'object') {
@@ -282,7 +296,7 @@ function connect (port, host, cb) {
         conn_options.host = host;
     }
 
-    var cryptoSocket = _net_connect(conn_options);
+    var cryptoSocket = net.connect(conn_options);
 
     var socket = new pluggableStream(cryptoSocket);
 
@@ -290,63 +304,31 @@ function connect (port, host, cb) {
         socket.clean();
         cryptoSocket.removeAllListeners('data');
 
-        // Set SSL_OP_ALL for maximum compatibility with broken servers
-        // See http://www.openssl.org/docs/ssl/SSL_CTX_set_options.html
         if (!options) options = {};
-        // TODO: bug in Node means we can't do this until it's fixed
-        // options.secureOptions = constants.SSL_OP_ALL;
 
-        // See comments around similar code in createServer above for what's
-        // going on here.
-        options.secureProtocol = options.secureProtocol || 'SSLv23_method';
-        options.secureOptions = options.secureOptions |
-                    constants.SSL_OP_NO_SSLv2 | constants.SSL_OP_NO_SSLv3;
+        options.secureContext = _getSecureContext(options);
+        options.socket = cryptoSocket;
 
-        var requestCert = true;
-        var rejectUnauthorized = false;
-        if (options) {
-            if (options.requestCert !== undefined) {
-                requestCert = options.requestCert;
+        var cleartext = new tls.connect(options);
+
+        pipe(cleartext, cryptoSocket);
+
+        cleartext.on('error', function (err) {
+            if (err.reason) {
+                log.logerror("client TLS error: " + err);
             }
-            if (options.rejectUnauthorized !== undefined) {
-                rejectUnauthorized = options.rejectUnauthorized;
-            }
-        }
-        var sslcontext = (tls.createSecureContext || crypto.createCredentials)(options);
+        })
 
-        // tls.createSecurePair([credentials], [isServer]);
-        var pair = tls.createSecurePair(sslcontext, false, requestCert, rejectUnauthorized);
-
-        socket.pair = pair;
-
-        var cleartext = pipe(pair, cryptoSocket);
-
-        pair.on('error', function(exception) {
-            socket.emit('error', exception);
-        });
-
-        pair.on('secure', function() {
-            var verifyError = (pair.ssl || pair._ssl).verifyError();
-
+        cleartext.on('secureConnect', function () {
             log.logdebug('client TLS secured.');
-            if (verifyError) {
-                cleartext.authorized = false;
-                cleartext.authorizationError = verifyError;
-            }
-            else {
-                cleartext.authorized = true;
-            }
-            var cert = pair.cleartext.getPeerCertificate();
-            if (pair.cleartext.getCipher) {
-                var cipher = pair.cleartext.getCipher();
-            }
-
-            if (cb2) cb2(cleartext.authorized, verifyError, cert, cipher);
-
-            socket.emit('secure');
+            if (cb2) cb2(
+                cleartext.authorized,
+                cleartext.authorizationError,
+                cleartext.getPeerCertificate(),
+                cleartext.getCipher()
+            );
         });
 
-        cleartext._controlReleased = true;
         socket.cleartext = cleartext;
 
         if (socket._timeout) {
@@ -358,25 +340,9 @@ function connect (port, host, cb) {
         socket.attach(socket.cleartext);
 
         log.logdebug('client TLS upgrade in progress, awaiting secured.');
-    };
-
-    return (socket);
-}
-
-exports.load_tls_ini = function (cb) {
-    var cfg = config.get('tls.ini', {
-        booleans: [
-            '+main.requestCert',
-            '-main.rejectUnauthorized',
-            '-redis.disable_for_failed_hosts',
-        ]
-    }, cb);
-
-    if (!cfg.no_tls_hosts) {
-        cfg.no_tls_hosts = {};
     }
 
-    return cfg;
+    return socket;
 }
 
 exports.connect = connect;

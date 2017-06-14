@@ -1,9 +1,9 @@
 // clamd
 
 var sock = require('./line_socket');
-var utils = require('./utils');
+var utils = require('haraka-utils');
 
-exports.load_excludes = function() {
+exports.load_excludes = function () {
     var plugin = this;
 
     plugin.loginfo('Loading excludes file');
@@ -67,7 +67,7 @@ exports.load_excludes = function() {
     plugin.skip_list = new_skip_list;
 };
 
-exports.load_clamd_ini = function() {
+exports.load_clamd_ini = function () {
     var plugin = this;
 
     plugin.cfg = plugin.config.get('clamd.ini', {
@@ -181,7 +181,7 @@ exports.hook_data_post = function (next, connection) {
     var hosts = cfg.main.clamd_socket.split(/[,; ]+/);
 
     if (cfg.main.randomize_host_order) {
-        hosts.sort(function() {return 0.5 - Math.random();});
+        hosts.sort(function () {return 0.5 - Math.random();});
     }
 
     var try_next_host = function () {
@@ -214,7 +214,13 @@ exports.hook_data_post = function (next, connection) {
                 return try_next_host();
             }
 
-            if (txn) txn.results.add(plugin, {err: err });
+            // If an error occurred after connection and there are other hosts left to try,
+            // then try those before returning DENYSOFT.
+            if (hosts.length) {
+                connection.logwarn(plugin, 'error on host ' + host + ': ' + err.message);
+                return try_next_host();
+            }
+            if (txn) txn.results.add(plugin, {err: 'error on host ' + host + ': ' + err.message });
             if (!plugin.cfg.reject.error) return next();
             return next(DENYSOFT, 'Virus scanner error');
         });
@@ -232,7 +238,9 @@ exports.hook_data_post = function (next, connection) {
 
         var result = '';
         socket.on('line', function (line) {
-            connection.logprotocol(plugin, 'C:' + line);
+            connection.logprotocol(plugin, 'C:' + line.split('').filter((x) => {
+                return 31 < x.charCodeAt(0) && 127 > x.charCodeAt(0)
+            }).join('') );
             result = line.replace(/\r?\n/, '');
         });
 
@@ -288,7 +296,14 @@ exports.hook_data_post = function (next, connection) {
                 return next();
             }
 
-            txn.results.add(plugin, { err: 'unknown result: ' + result });
+            // The current host returned an unknown result.  If other hosts are available,
+            // then try those before returning a DENYSOFT.
+            if (hosts.length) {
+                connection.logwarn(plugin, 'unknown result: "' + result + '" from host ' + host);
+                socket.destroy();
+                return try_next_host();
+            }
+            txn.results.add(plugin, { err: 'unknown result: "' + result + '" from host ' + host });
             if (!plugin.cfg.reject.error) return next();
             return next(DENYSOFT, 'Error running virus scanner');
         });

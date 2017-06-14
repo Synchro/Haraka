@@ -1,11 +1,11 @@
 
 var util         = require('util');
 
-function _set_up(callback) {
+function _set_up (callback) {
     this.logger = require('../logger');
     callback();
 }
-function _tear_down(callback) {
+function _tear_down (callback) {
     callback();
 }
 
@@ -108,7 +108,6 @@ exports.colors = {
         test.expect(4);
         test.ok(this.logger.colorize);
         test.equal('function', typeof this.logger.colorize);
-        // missing on Node < 0.10
         test.equal('error', this.logger.colorize('bad-color', 'error'));
         var expected = util.inspect.colors ? '\u001b[34mgood\u001b[39m' : 'good';
         test.equal(expected, this.logger.colorize('blue', 'good'));
@@ -168,7 +167,7 @@ exports.add_log_methods = {
     'ignores non-objects' : function (test) {
         test.expect(2);
         test.equal(undefined, this.logger.add_log_methods(''));
-        test.equal(undefined, this.logger.add_log_methods(function foo(){}));
+        test.equal(undefined, this.logger.add_log_methods(function foo (){}));
         test.done();
     },
     'adds functions to an object' : function (test) {

@@ -1,7 +1,9 @@
-"use strict";
+'use strict';
 // An RFC 2822 email header parser
+/* eslint no-control-regex: 0 */
+
 var logger = require('./logger');
-var utils  = require('./utils');
+var utils  = require('haraka-utils');
 var Iconv;
 try { Iconv = require('iconv').Iconv }
 catch (err) {
@@ -13,7 +15,7 @@ function Header (options) {
     this.headers_decoded = {};
     this.header_list = [];
     this.options = options;
-};
+}
 
 exports.Header = Header;
 exports.Iconv  = Iconv;
@@ -21,7 +23,7 @@ exports.Iconv  = Iconv;
 Header.prototype.parse = function (lines) {
     var self = this;
 
-    for (var i=0,l=lines.length; i < l; i++) {
+    for (let i=0,l=lines.length; i < l; i++) {
         var line = lines[i];
         if (/^[ \t]/.test(line)) {
             // continuation
@@ -32,7 +34,7 @@ Header.prototype.parse = function (lines) {
         }
     }
 
-    for (var i=0,l=this.header_list.length; i < l; i++) {
+    for (let i=0,l=this.header_list.length; i < l; i++) {
         var match = this.header_list[i].match(/^([^\s:]*):\s*([\s\S]*)$/);
         if (match) {
             var key = match[1].toLowerCase();
@@ -46,16 +48,16 @@ Header.prototype.parse = function (lines) {
     }
 
     // Now add decoded versions
-    Object.keys(this.headers).forEach(function (key2) {
-        self.headers[key2].forEach(function (val2) {
+    Object.keys(this.headers).forEach((key2) => {
+        self.headers[key2].forEach((val2) => {
             self._add_header_decode(key2, val2, 'push');
         })
     })
 };
 
-function try_convert(data, encoding) {
+function try_convert (data, encoding) {
     try {
-        var converter = new Iconv(encoding, "UTF-8");
+        let converter = new Iconv(encoding, "UTF-8");
         data = converter.convert(data);
     }
     catch (err) {
@@ -63,7 +65,7 @@ function try_convert(data, encoding) {
         logger.logwarn("initial iconv conversion from " + encoding + " to UTF-8 failed: " + err.message);
         if (err.code !== 'EINVAL') {
             try {
-                var converter = new Iconv(encoding, "UTF-8//TRANSLIT//IGNORE");
+                let converter = new Iconv(encoding, "UTF-8//TRANSLIT//IGNORE");
                 data = converter.convert(data);
             }
             catch (e) {
@@ -135,7 +137,12 @@ function _decode_rfc2231 (params) {
 
         params.cur_key = key_actual;
         params.keys[key_actual] = '';
-        value = decodeURIComponent(value);
+        try {
+            value = decodeURIComponent(value);
+        }
+        catch (e) {
+            logger.logerror("Decode header failed: " + key + ": " + value);
+        }
         params.kv[key_actual + '*' + key_id] = params.cur_enc ? try_convert(value, params.cur_enc) : value;
         return '';
     }
@@ -150,10 +157,12 @@ Header.prototype.decode_header = function decode_header (val) {
         cur_enc: '',
         cur_lang: '', // Secondary languages are ignored for our purposes
     };
+
     val = val.replace(/\n[ \t]+([^\n]*)/g, _decode_rfc2231(rfc2231_params));
     for (var key in rfc2231_params.keys) {
         val = val + ' ' + key + '="';
-        for (var i=0; true; i++) {
+        /* eslint no-constant-condition: 0 */
+        for (let i=0; true; i++) {
             var _key = key + '*' + i;
             var _val = rfc2231_params.kv[_key];
             if (_val === undefined) break;
@@ -164,7 +173,9 @@ Header.prototype.decode_header = function decode_header (val) {
 
     // remove end carriage return
     val = val.replace(/\r?\n$/, '');
-    val = val.replace(/\([^\)]*\)/, ''); // strip 822 comments in the most basic way - does not support nested comments
+
+    // strip 822 comments in the most basic way - does not support nested comments
+    // val = val.replace(/\([^\)]*\)/, '');
 
     if (Iconv && !/^[\x00-\x7f]*$/.test(val)) {
         // 8 bit values in the header

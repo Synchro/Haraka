@@ -5,7 +5,7 @@
 var ipaddr = require('ipaddr.js');
 var net    = require('net');
 
-exports.register = function() {
+exports.register = function () {
     var plugin = this;
 
     plugin.load_relay_ini();             // plugin.cfg = { }
@@ -51,7 +51,7 @@ exports.load_dest_domains = function () {
     plugin.dest = plugin.config.get(
         'relay_dest_domains.ini',
         'ini',
-        function() { plugin.load_dest_domains(); }
+        function () { plugin.load_dest_domains(); }
     );
 };
 
@@ -80,7 +80,7 @@ exports.acl = function (next, connection) {
     var plugin = this;
     if (!plugin.cfg.relay.acl) { return next(); }
 
-    connection.logdebug(this, 'checking ' + connection.remote_ip + ' in relay_acl_allow');
+    connection.logdebug(this, 'checking ' + connection.remote.ip + ' in relay_acl_allow');
 
     if (!plugin.is_acl_allowed(connection)) {
         connection.results.add(plugin, {skip: 'acl(unlisted)'});
@@ -97,7 +97,7 @@ exports.is_acl_allowed = function (connection) {
     if (!plugin.acl_allow) { return false; }
     if (!plugin.acl_allow.length) { return false; }
 
-    var ip = connection.remote_ip;
+    var ip = connection.remote.ip;
 
     for (var i=0; i < plugin.acl_allow.length; i++) {
         var item = plugin.acl_allow[i];
@@ -195,7 +195,7 @@ exports.force_routing = function (next, hmail, domain) {
     return next(OK, nexthop);
 };
 
-exports.all = function(next, connection, params) {
+exports.all = function (next, connection, params) {
 // relay everything - could be useful for a spamtrap
     var plugin = this;
     if (!plugin.cfg.relay.all) { return next(); }

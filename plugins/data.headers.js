@@ -50,16 +50,18 @@ exports.load_headers_ini = function () {
     });
 };
 
-exports.duplicate_singular = function(next, connection) {
+exports.duplicate_singular = function (next, connection) {
     var plugin = this;
     if (!plugin.cfg.check.duplicate_singular) { return next(); }
 
     // RFC 5322 Section 3.6, Headers that MUST be unique if present
     var singular = plugin.cfg.main.singular !== undefined ?
                    plugin.cfg.main.singular.split(',') :
-                   ['Date', 'From', 'Sender', 'Reply-To', 'To', 'Cc',
-                    'Bcc', 'Message-Id', 'In-Reply-To', 'References',
-                    'Subject'];
+    [
+        'Date', 'From', 'Sender', 'Reply-To', 'To', 'Cc',
+        'Bcc', 'Message-Id', 'In-Reply-To', 'References',
+        'Subject'
+    ];
 
     var failures = [];
     for (var i=0; i < singular.length; i++ ) {
@@ -84,7 +86,7 @@ exports.duplicate_singular = function(next, connection) {
     return next();
 };
 
-exports.missing_required = function(next, connection) {
+exports.missing_required = function (next, connection) {
     var plugin = this;
     if (!plugin.cfg.check.missing_required) { return next(); }
 
@@ -113,7 +115,7 @@ exports.missing_required = function(next, connection) {
     return next();
 };
 
-exports.invalid_return_path = function(next, connection) {
+exports.invalid_return_path = function (next, connection) {
     var plugin = this;
     if (!plugin.cfg.check.invalid_return_path) { return next(); }
 
@@ -285,6 +287,10 @@ exports.from_match = function (next, connection) {
     }
 
     var hdr_addr = (plugin.addrparser.parse(hdr_from))[0];
+    if (!hdr_addr) {
+        connection.transaction.results.add(plugin, {fail: 'from_match(unparsable)'});
+        return next();
+    }
 
     if (env_addr.address().toLowerCase() === hdr_addr.address.toLowerCase()) {
         connection.transaction.results.add(plugin, {pass: 'from_match'});
@@ -348,8 +354,8 @@ exports.mailing_list = function (next, connection) {
         'Sender'             : [
             { mlm: 'majordomo',   start: 'owner-' },
         ],
-        'X-Mailman-Version'  : [ { mlm: 'mailman'   }, ],
-        'X-Majordomo-Version': [ { mlm: 'majordomo' }, ],
+        'X-Mailman-Version'  : [ { mlm: 'mailman'   } ],
+        'X-Majordomo-Version': [ { mlm: 'majordomo' } ],
         'X-Google-Loop'      : [ { mlm: 'googlegroups' } ],
     };
 

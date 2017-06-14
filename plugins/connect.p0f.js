@@ -4,7 +4,7 @@
 var net    = require('net');
 var ipaddr = require('ipaddr.js');
 
-function P0FClient(path) {
+function P0FClient (path) {
     var self = this;
 
     this.sock = null;
@@ -60,6 +60,12 @@ function P0FClient(path) {
         });
     };
     connect();
+}
+
+P0FClient.prototype.shutdown = function () {
+    if (this.restart_interval) {
+        clearInterval(this.restart_interval);
+    }
 }
 
 P0FClient.prototype.decode_response = function (data) {
@@ -183,14 +189,17 @@ exports.hook_init_child = function (next, server) {
     return next();
 };
 
-exports.hook_lookup_rdns = function onLookup(next, connection) {
+exports.hook_lookup_rdns = function onLookup (next, connection) {
     var plugin = this;
+    if (connection.remote.is_private) return next();
+
     if (!server.notes.p0f_client) {
         connection.logerror(plugin, 'missing server');
         return next();
     }
+
     var p0f_client = server.notes.p0f_client;
-    p0f_client.query(connection.remote_ip, function (err, result) {
+    p0f_client.query(connection.remote.ip, function (err, result) {
         if (err) {
             connection.results.add(plugin, {err: err.message});
             return next();
@@ -207,7 +216,7 @@ exports.hook_lookup_rdns = function onLookup(next, connection) {
     });
 };
 
-function format_results(r) {
+function format_results (r) {
     var data = [];
     if (r.os_name) data.push('os="' + r.os_name + ' ' + r.os_flavor + '"');
     if (r.link_type) data.push('link_type="' + r.link_type + '"');
@@ -219,6 +228,8 @@ function format_results(r) {
 
 exports.hook_data_post = function (next, connection) {
     var plugin = this;
+    if (connection.remote.is_private) return next();
+
     var header_name = plugin.cfg.main.add_header;
     if (!header_name) {
         connection.logdebug(plugin, 'header disabled in ini' );
@@ -227,7 +238,7 @@ exports.hook_data_post = function (next, connection) {
 
     connection.transaction.remove_header(header_name);
     var result = connection.results.get('connect.p0f');
-    if (!result || !result.os) {
+    if (!result || !result.os_name) {
         connection.results.add(plugin, {err: 'no p0f note'});
         return next();
     }

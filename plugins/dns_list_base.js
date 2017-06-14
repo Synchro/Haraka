@@ -1,7 +1,7 @@
 // DNS list module
 var dns         = require('dns');
 var net         = require('net');
-var net_utils   = require('./net_utils');
+var net_utils   = require('haraka-net-utils');
 var async       = require('async');
 
 exports.enable_stats = false;
@@ -13,7 +13,7 @@ exports.lookup = function (lookup, zone, cb) {
     var self = this;
 
     if (!lookup || !zone) {
-        return process.nextTick(function () {
+        return setImmediate(function () {
             return cb(new Error('missing data'));
         });
     }
@@ -79,16 +79,17 @@ exports.stats_incr_zone = function (err, zone, start) {
 };
 
 exports.init_redis = function () {
+    var plugin = this;
     if (redis_client) { return; }
 
     var redis = require('redis');
-    var host_port = this.redis_host.split(':');
+    var host_port = plugin.redis_host.split(':');
     var host = host_port[0] || '127.0.0.1';
     var port = parseInt(host_port[1], 10) || 6379;
 
     redis_client = redis.createClient(port, host);
     redis_client.on('error', function (err) {
-        self.logerror('Redis error: ' + err);
+        plugin.logerror('Redis error: ' + err);
         redis_client.quit();
         redis_client = null; // should force a reconnect
         // not sure if that's the right thing but better than nothing...
@@ -188,6 +189,13 @@ exports.check_zones = function (interval) {
         this._interval = setInterval(function () {
             self.check_zones();
         }, (interval * 60) * 1000);
+    }
+};
+
+exports.shutdown = function () {
+    clearInterval(this._interval);
+    if (redis_client) {
+        redis_client.quit();
     }
 };
 

@@ -26,12 +26,21 @@ exports.hook_deny = function (next, connection, params) {
     // Load config
     var cfg = this.config.get('delay_deny.ini');
     var skip;
-    if (cfg.main.excluded_plugins) {
+    var included;
+    if (cfg.main.included_plugins) {
+        included = cfg.main.included_plugins.split(/[;, ]+/);
+    } else if (cfg.main.excluded_plugins) {
         skip = cfg.main.excluded_plugins.split(/[;, ]+/);
     }
 
-    // See if we should skip this delay
-    if (skip && skip.length) {
+    // 'included' mode: only delay deny plugins in the included list
+    if (included && included.length) {
+        if (included.indexOf(pi_name) === -1 &&
+            included.indexOf(pi_name + ':' + pi_hook) === -1 &&
+            included.indexOf(pi_name + ':' + pi_hook + ':' + pi_function) === -1) {
+            return next();
+        }
+    } else if (skip && skip.length) { // 'excluded' mode: delay deny everything except in skip list
         // Skip by <plugin name>
         if (skip.indexOf(pi_name) !== -1) {
             connection.logdebug(plugin, 'not delaying excluded plugin: ' + pi_name);
@@ -82,18 +91,7 @@ exports.hook_deny = function (next, connection, params) {
         // Post-DATA delays
         case 'data':
         case 'data_post':
-            /*  Delays disabled for now
-            if (!transaction.notes.delay_deny_post) {
-                transaction.notes.delay_deny_post = [];
-            }
-            transaction.notes.delay_deny_post.push(params);
-            if (!transaction.notes.delay_deny_post_fail) {
-                transaction.notes.delay_deny_post_fail = {};
-            }
-            transaction.notes.delay_deny_post_fail[pi_name] = 1;
-            return next(OK);
-            break;
-            */
+            // fall through
         default:
             // No delays
             return next();
@@ -113,16 +111,16 @@ exports.hook_rcpt_ok = function (next, connection, rcpt) {
     // Apply any delayed rejections
     // Check connection level pre-DATA rejections first
     if (connection.notes.delay_deny_pre) {
-        for (var i=0; i<connection.notes.delay_deny_pre.length; i++) {
-            var params = connection.notes.delay_deny_pre[i];
+        for (let i=0; i<connection.notes.delay_deny_pre.length; i++) {
+            let params = connection.notes.delay_deny_pre[i];
             return next(params[0], params[1]);
         }
     }
 
     // Then check transaction level pre-DATA
     if (transaction.notes.delay_deny_pre) {
-        for (var i=0; i<transaction.notes.delay_deny_pre.length; i++) {
-            var params = transaction.notes.delay_deny_pre[i];
+        for (let i=0; i<transaction.notes.delay_deny_pre.length; i++) {
+            let params = transaction.notes.delay_deny_pre[i];
 
             // Remove rejection from the array if it was on the rcpt hooks
             if (params[5] === 'rcpt' || params[5] === 'rcpt_ok') {

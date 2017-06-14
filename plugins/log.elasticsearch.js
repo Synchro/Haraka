@@ -1,9 +1,9 @@
 'use strict';
 // log to Elasticsearch
 
-var utils = require('./utils');
+var utils = require('haraka-utils');
 
-exports.register = function() {
+exports.register = function () {
     var plugin = this;
 
     try {
@@ -72,8 +72,7 @@ exports.load_es_ini = function () {
         ['From', 'To', 'Subject'];
 
     plugin.cfg.conn_props = plugin.cfg.connection_properties ||
-        {   using_tls:undefined,
-            relaying:undefined,
+        {   relaying:undefined,
             totalbytes:undefined,
             pipelining:undefined,
             early_talker:undefined,
@@ -95,7 +94,7 @@ exports.get_es_hosts = function () {
         }
 
         var opts = { host: host };
-        plugin.cfg.hosts[host].trim().split(',').forEach(function(opt){
+        plugin.cfg.hosts[host].trim().split(',').forEach(function (opt){
             var o=opt.trim().split(':');
             opts[o[0]] = o[1];
         });
@@ -192,10 +191,10 @@ exports.getIndexName = function (section) {
         name = plugin.cfg.index[section];
     }
     var date = new Date();
-    var d = date.getDate();
-    var m = date.getMonth() + 1;
+    var d = date.getUTCDate();
+    var m = date.getUTCMonth() + 1;
     return name +
-           '-' + date.getFullYear() +
+           '-' + date.getUTCFullYear() +
            '-' + (m <= 9 ? '0' + m : m) +
            '-' + (d <= 9 ? '0' + d : d);
 };
@@ -212,18 +211,21 @@ exports.populate_conn_properties = function (conn, res) {
     }
 
     conn_res.local = {
-        ip:   conn.local_ip,
-        port: conn.local_port,
+        ip:   conn.local.ip,
+        port: conn.local.port,
         host: plugin.cfg.hostname || require('os').hostname(),
     };
     conn_res.remote = {
-        ip:   conn.remote_ip,
-        host: conn.remote_host,
-        port: conn.remote_port,
+        ip:   conn.remote.ip,
+        host: conn.remote.host,
+        port: conn.remote.port,
     };
     conn_res.hello = {
-        host: conn.hello_host,
-        verb: conn.greeting,
+        host: conn.hello.host,
+        verb: conn.hello.verb,
+    };
+    conn_res.tls = {
+        enabled: conn.tls.enabled,
     };
 
     if (!conn_res.auth) {
@@ -329,11 +331,14 @@ exports.populate_message = function (pir, connection) {
     };
 
     if (pir.mail_from && pir.mail_from.address) {
-        pir.message.envelope.sender = pir.mail_from.address;
+        pir.message.envelope.sender = pir.mail_from.address.toLowerCase();
         delete pir.mail_from.address;
     }
 
     if (pir.rcpt_to && pir.rcpt_to.recipient) {
+        for (var key in pir.rcpt_to.recipient) {
+            pir.rcpt_to.recipient[key].address=pir.rcpt_to.recipient[key].address.toLowerCase();
+        }
         pir.message.envelope.recipient = pir.rcpt_to.recipient;
         delete pir.rcpt_to;
     }
@@ -454,6 +459,9 @@ exports.prune_noisy = function (res, pi) {
             var arr = plugin.objToArray(res.fcrdns.ptr_name_to_ip);
             res.fcrdns.ptr_name_to_ip = arr;
             break;
+        case 'geoip':
+            delete res.geoip.ll;
+            break;
         case 'max_unrecognized_commands':
             res.unrecognized_commands =
                 res.max_unrecognized_commands.count;
@@ -509,7 +517,6 @@ exports.put_map_template = function () {
         template_name = plugin.cfg.index.transaction;
     }
 
-    /* jshint maxlen: 100 */
     var body = {
         "dynamic_templates" : [
             // gone until docs for putTemplate are better

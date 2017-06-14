@@ -5,27 +5,28 @@ var addrparser = require('address-rfc2822');
 var async      = require('async');
 var crypto     = require('crypto');
 var fs         = require('fs');
+var path       = require('path');
 var Stream     = require('stream').Stream;
-var util       = require('util');
-var utils      = require('./utils');
 
-function DKIMSignStream(selector, domain, private_key, headers_to_sign, header, end_callback) {
-    Stream.call(this);
-    this.selector = selector;
-    this.domain = domain;
-    this.private_key = private_key;
-    this.headers_to_sign = headers_to_sign;
-    this.header = header;
-    this.end_callback = end_callback;
-    this.writable = true;
-    this.found_eoh = false;
-    this.buffer = { ar: [], len: 0 };
-    this.hash = crypto.createHash('SHA256');
-    this.line_buffer = { ar: [], len: 0 };
-    this.signer = crypto.createSign('RSA-SHA256');
+var utils      = require('haraka-utils');
+
+class DKIMSignStream extends Stream {
+    constructor (selector, domain, private_key, headers_to_sign, header, end_callback) {
+        super();
+        this.selector = selector;
+        this.domain = domain;
+        this.private_key = private_key;
+        this.headers_to_sign = headers_to_sign;
+        this.header = header;
+        this.end_callback = end_callback;
+        this.writable = true;
+        this.found_eoh = false;
+        this.buffer = { ar: [], len: 0 };
+        this.hash = crypto.createHash('SHA256');
+        this.line_buffer = { ar: [], len: 0 };
+        this.signer = crypto.createSign('RSA-SHA256');
+    }
 }
-
-util.inherits(DKIMSignStream, Stream);
 
 DKIMSignStream.prototype.write = function (buf) {
     /*
@@ -162,11 +163,19 @@ exports.load_key = function (file) {
     return this.config.get(file, 'data').join('\n');
 };
 
-exports.hook_queue_outbound = function (next, connection) {
+exports.hook_queue_outbound = exports.hook_pre_send_trans_email = function (next, connection) {
     var plugin = this;
     if (plugin.cfg.main.disabled) { return next(); }
+    if (connection.transaction.notes.dkim_signed) {
+        connection.logdebug(plugin, 'email already signed');
+        return next();
+    }
 
-    plugin.get_key_dir(connection, function(keydir) {
+    plugin.get_key_dir(connection, function (err, keydir) {
+        if (err) {
+            connection.logerror(plugin, err);
+            return next(DENYSOFT, "Error getting key_dir in dkim_sign");
+        }
         var domain;
         var selector;
         var private_key;
@@ -176,10 +185,10 @@ exports.hook_queue_outbound = function (next, connection) {
             selector = plugin.cfg.main.selector;
         }
         else {
-            domain = keydir.split('/').pop();
-            connection.logdebug(plugin, 'dkim_domain: '+domain);
-            private_key = plugin.load_key('dkim/'+domain+'/private');
-            selector    = plugin.load_key('dkim/'+domain+'/selector').trim();
+            domain = path.basename(keydir);
+            connection.logdebug(plugin, 'dkim_domain: ' + domain);
+            private_key = plugin.load_key(path.join('dkim', domain, 'private'));
+            selector    = plugin.load_key(path.join('dkim', domain, 'selector')).trim();
         }
 
         if (!plugin.has_key_data(connection,domain,selector,private_key)) {
@@ -188,15 +197,16 @@ exports.hook_queue_outbound = function (next, connection) {
 
         var headers_to_sign = plugin.get_headers_to_sign();
         var txn = connection.transaction;
-        var dkimCallback = function (err, dkim_header) {
-            if (err) {
-                txn.results.add(plugin, {err: err.message});
+        var dkimCallback = function (err2, dkim_header) {
+            if (err2) {
+                txn.results.add(plugin, {err: err2.message});
             }
             else {
                 connection.loginfo(plugin, 'signed for ' + domain);
                 txn.results.add(plugin, {pass: dkim_header});
                 txn.add_header('DKIM-Signature', dkim_header);
             }
+            connection.transaction.notes.dkim_signed = true;
             return next();
         };
         txn.message_stream.pipe(new DKIMSignStream(
@@ -205,27 +215,33 @@ exports.hook_queue_outbound = function (next, connection) {
     });
 };
 
-exports.get_key_dir = function (connection, cb) {
+exports.get_key_dir = function (connection, done) {
     var plugin = this;
-    var txn    = connection.transaction;
-    var domain = plugin.get_sender_domain(txn);
-    if (!domain) { return cb(); }
+    var domain = plugin.get_sender_domain(connection.transaction);
+    if (!domain) { return done(); }
 
     // split the domain name into labels
     var labels     = domain.split('.');
-    var haraka_dir = process.env.HARAKA;
+    var haraka_dir = process.env.HARAKA || '';
 
     // list possible matches (ex: mail.example.com, example.com, com)
     var dom_hier = [];
     for (var i=0; i<labels.length; i++) {
         var dom = labels.slice(i).join('.');
-        dom_hier[i] = haraka_dir + "/config/dkim/"+dom;
+        dom_hier[i] = path.resolve(haraka_dir, 'config', 'dkim', dom);
     }
-    connection.logdebug(plugin, dom_hier);
 
-    async.filter(dom_hier, fs.exists, function(results) {
+    async.detectSeries(dom_hier, function (filePath, iterDone) {
+        fs.stat(filePath, function (err, stats) {
+            if (err) return iterDone(null, false);
+            iterDone(null, stats.isDirectory());
+        });
+    }, function (err, results) {
+        if (err) {
+            connection.logerror(err);
+        }
         connection.logdebug(plugin, results);
-        cb(results[0]);
+        done(err, results);
     });
 };
 
@@ -246,7 +262,6 @@ exports.has_key_data = function (conn, domain, selector, private_key) {
         return false;
     }
 
-    conn.logprotocol(plugin, 'private_key: '+private_key);
     conn.logprotocol(plugin, 'selector: '+selector);
     return true;
 };
@@ -276,7 +291,7 @@ exports.get_sender_domain = function (txn) {
 
     // a fallback, when header parsing fails
     var domain;
-    try { domain = txn.mail_from.host.toLowerCase(); }
+    try { domain = txn.mail_from.host && txn.mail_from.host.toLowerCase(); }
     catch (e) {
         plugin.logerror(e);
     }
@@ -294,15 +309,25 @@ exports.get_sender_domain = function (txn) {
     if (!addrs || ! addrs.length) { return domain; }
 
     // If From has a single address, we're done
-    if (addrs.length === 1) { return addrs[0].host().toLowerCase(); }
+    if (addrs.length === 1) {
+        var fromHost = addrs[0].host();
+        if (fromHost) {
+            // don't attempt to lower a null or undefined value #1575
+            fromHost = fromHost.toLowerCase();
+        }
+        return fromHost;
+    }
 
     // If From has multiple-addresses, we must parse and
     // use the domain in the Sender header.
-    try {
-        domain = (addrparser.parse(txn.header.get('Sender')))[0].host();
+    var sender = txn.header.get('Sender');
+    if (sender) {
+        try {
+            domain = (addrparser.parse(sender))[0].host().toLowerCase();
+        }
+        catch (e) {
+            plugin.logerror(e);
+        }
     }
-    catch (e) {
-        plugin.logerror(e);
-    }
-    return domain.toLowerCase();
+    return domain;
 };

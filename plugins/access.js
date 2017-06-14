@@ -1,10 +1,10 @@
 // access plugin
 var tlds      = require('haraka-tld');
+var haddr     = require('address-rfc2822');
+var net_utils = require('haraka-net-utils');
+var utils     = require('haraka-utils');
 
-var net_utils = require('./net_utils');
-var utils     = require('./utils');
-
-exports.register = function() {
+exports.register = function () {
     var plugin = this;
 
     plugin.init_config();      // init plugin.cfg
@@ -40,7 +40,7 @@ exports.register = function() {
     }
 };
 
-exports.init_config = function() {
+exports.init_config = function () {
     var plugin = this;
 
     plugin.cfg = {
@@ -135,10 +135,10 @@ exports.get_domain = function (hook, connection, params) {
 
     switch (hook) {
         case 'connect':
-            if (!connection.remote_host) return;
-            if (connection.remote_host === 'DNSERROR') return;
-            if (connection.remote_host === 'Unknown') return;
-            return connection.remote_host;
+            if (!connection.remote.host) return;
+            if (connection.remote.host === 'DNSERROR') return;
+            if (connection.remote.host === 'Unknown') return;
+            return connection.remote.host;
         case 'helo':
         case 'ehlo':
             if (net_utils.is_ip_literal(params)) return;
@@ -213,17 +213,17 @@ exports.any = function (next, connection, params) {
     return next();
 };
 
-exports.rdns_access = function(next, connection) {
+exports.rdns_access = function (next, connection) {
     var plugin = this;
     if (!plugin.cfg.check.conn) { return next(); }
 
-    if (!connection.remote_ip) {
+    if (!connection.remote.ip) {
         connection.results.add(plugin, {err: 'no IP?!' });
         return next();
     }
 
-    var r_ip = connection.remote_ip;
-    var host = connection.remote_host;
+    var r_ip = connection.remote.ip;
+    var host = connection.remote.host;
 
     var addr;
     var file;
@@ -276,7 +276,7 @@ exports.rdns_access = function(next, connection) {
     return next();
 };
 
-exports.helo_access = function(next, connection, helo) {
+exports.helo_access = function (next, connection, helo) {
     var plugin = this;
     if (!plugin.cfg.check.helo) { return next(); }
 
@@ -290,7 +290,7 @@ exports.helo_access = function(next, connection, helo) {
     return next();
 };
 
-exports.mail_from_access = function(next, connection, params) {
+exports.mail_from_access = function (next, connection, params) {
     var plugin = this;
     if (!plugin.cfg.check.mail) { return next(); }
 
@@ -334,7 +334,7 @@ exports.mail_from_access = function(next, connection, params) {
     return next();
 };
 
-exports.rcpt_to_access = function(next, connection, params) {
+exports.rcpt_to_access = function (next, connection, params) {
     var plugin = this;
     if (!plugin.cfg.check.rcpt) { return next(); }
 
@@ -376,7 +376,7 @@ exports.rcpt_to_access = function(next, connection, params) {
     return next();
 };
 
-exports.data_any = function(next, connection) {
+exports.data_any = function (next, connection) {
     var plugin = this;
     if (!plugin.cfg.check.data && !plugin.cfg.check.any) {
         connection.transaction.results.add(plugin, {skip: 'data(disabled)'});
@@ -390,7 +390,13 @@ exports.data_any = function(next, connection) {
         return next();
     }
 
-    var hdr_addr = (require('address-rfc2822').parse(hdr_from))[0];
+    var hdr_addr = haddr.parse(hdr_from)[0];
+    if (!hdr_addr) {
+        connection.transaction.results.add(plugin, {
+            fail: 'data(unparsable_from)'
+        });
+        return next();
+    }
     var hdr_dom = tlds.get_organizational_domain(hdr_addr.host());
 
     var file = plugin.cfg.domain.any;

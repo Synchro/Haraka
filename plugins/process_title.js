@@ -19,11 +19,12 @@ exports.hook_init_master = function (next, server) {
         server.notes.pt_new_out_stats = [0,0,0,0];
         var cluster = server.cluster;
         var recvMsg = function (msg) {
+            var count;
             switch (msg.event) {
                 case 'process_title.connect':
                     server.notes.pt_connections++;
                     server.notes.pt_concurrent_cluster[msg.wid]++;
-                    var count = 0;
+                    count = 0;
                     Object.keys(server.notes.pt_concurrent_cluster).forEach(function (id) {
                         count += server.notes.pt_concurrent_cluster[id];
                     });
@@ -31,7 +32,7 @@ exports.hook_init_master = function (next, server) {
                     break;
                 case 'process_title.disconnect':
                     server.notes.pt_concurrent_cluster[msg.wid]--;
-                    var count = 0;
+                    count = 0;
                     Object.keys(server.notes.pt_concurrent_cluster).forEach(function (id) {
                         count += server.notes.pt_concurrent_cluster[id];
                     });
@@ -51,6 +52,7 @@ exports.hook_init_master = function (next, server) {
                         server.notes.pt_out_stats = server.notes.pt_new_out_stats.slice(0,3).join('/');
                         server.notes.pt_new_out_stats = [0,0,0,0];
                     }
+                    // fall through
                 default:
                     // Unknown message
             }
@@ -71,7 +73,7 @@ exports.hook_init_master = function (next, server) {
             server.notes.pt_child_exits++;
         });
     }
-    setupInterval(title, server);
+    this._interval = setupInterval(title, server);
     return next();
 };
 
@@ -85,8 +87,13 @@ exports.hook_init_child = function (next, server) {
     server.notes.pt_mps_max = 0;
     var title = 'Haraka (worker)';
     process.title = title;
-    setupInterval(title, server);
+    this._interval = setupInterval(title, server);
     return next();
+};
+
+exports.shutdown = function () {
+    this.logdebug("Shutting down interval: " + this._interval);
+    clearInterval(this._interval);
 };
 
 exports.hook_connect_init = function (next, connection) {
@@ -137,7 +144,7 @@ exports.hook_data = function (next, connection) {
 
 var setupInterval = function (title, server) {
     // Set up a timer to update title
-    setInterval(function () {
+    return setInterval(function () {
         // Connections per second
         var av_cps = Math.round((server.notes.pt_connections/process.uptime()*100))/100;
         var cps = server.notes.pt_connections - server.notes.pt_cps_diff;

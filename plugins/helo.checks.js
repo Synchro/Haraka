@@ -3,8 +3,8 @@
 
 var tlds      = require('haraka-tld');
 var dns       = require('dns');
-var net_utils = require('./net_utils');
-var utils     = require('./utils');
+var net_utils = require('haraka-net-utils');
+var utils     = require('haraka-utils');
 
 var checks = [
     'match_re',           // List of regexps
@@ -16,7 +16,6 @@ var checks = [
     'rdns_match',         // HELO hostname matches rDNS
     'forward_dns',        // HELO hostname resolves to the connecting IP
     'host_mismatch',      // hostname differs between invocations
-    'emit_log',           // emit a loginfo summary
 ];
 
 exports.register = function () {
@@ -40,6 +39,10 @@ exports.register = function () {
         plugin.register_hook('ehlo', hook);
     }
 
+    // Always emit a log entry
+    plugin.register_hook('helo', 'emit_log');
+    plugin.register_hook('ehlo', 'emit_log');
+
     if (plugin.cfg.check.match_re) {
         var load_re_file = function () {
             var regex_list = utils.valid_regexes(plugin.config.get('helo.checks.regexps', 'list', load_re_file));
@@ -53,34 +56,22 @@ exports.register = function () {
 exports.load_helo_checks_ini = function () {
     var plugin = this;
 
-    plugin.cfg = plugin.config.get('helo.checks.ini', {
-        booleans: [
-            '+check.match_re',
-            '+check.bare_ip',
-            '+check.dynamic',
-            '+check.big_company',
-            '+check.valid_hostname',
-            '+check.forward_dns',
-            '+check.rdns_match',
-            '+check.mismatch',
-            '+check.proto_mismatch',
+    var booleans = [
+        '+skip.private_ip',
+        '+skip.whitelist',
+        '+skip.relaying',
 
-            '+reject.valid_hostname',
-            '+reject.match_re',
-            '+reject.bare_ip',
-            '+reject.dynamic',
-            '+reject.big_company',
-            '-reject.forward_dns',
-            '-reject.literal_mismatch',
-            '-reject.rdns_match',
-            '-reject.mismatch',
-            '-reject.proto_mismatch',
+        '+check.proto_mismatch',
+        '-reject.proto_mismatch',
+    ];
 
-            '+skip.private_ip',
-            '+skip.whitelist',
-            '+skip.relaying',
-        ],
-    }, function () {
+    checks.forEach(function (c) {
+        booleans.push('+check.' + c);
+        booleans.push('-reject.' + c);
+    });
+
+    plugin.cfg = plugin.config.get('helo.checks.ini', { booleans: booleans },
+    function () {
         plugin.load_helo_checks_ini();
     });
 
@@ -93,6 +84,16 @@ exports.load_helo_checks_ini = function () {
     }
     if (plugin.cfg.check_raw_ip !== undefined) {
         plugin.cfg.check.bare_ip = plugin.cfg.check_raw_ip ? true : false;
+    }
+
+    // non-default setting, so apply their localized setting
+    if (plugin.cfg.check.mismatch !== undefined && !plugin.cfg.check.mismatch) {
+        plugin.logerror('deprecated setting mismatch renamed to host_mismatch');
+        plugin.cfg.check.host_mismatch = plugin.cfg.check.mismatch;
+    }
+    if (plugin.cfg.reject.mismatch !== undefined && plugin.cfg.reject.mismatch) {
+        plugin.logerror('deprecated setting mismatch renamed to host_mismatch');
+        plugin.cfg.reject.host_mismatch = plugin.cfg.reject.mismatch;
     }
 };
 
@@ -124,7 +125,7 @@ exports.should_skip = function (connection, test_name) {
         return true;
     }
 
-    if (plugin.cfg.skip.private_ip && net_utils.is_private_ip(connection.remote_ip)) {
+    if (plugin.cfg.skip.private_ip && connection.remote.is_private) {
         connection.results.add(plugin, {skip: test_name + '(private)'});
         return true;
     }
@@ -151,9 +152,9 @@ exports.host_mismatch = function (next, connection, helo) {
 
     var msg = 'host_mismatch(' + prev_helo + ' / ' + helo + ')';
     connection.results.add(plugin, {fail: msg});
-    if (plugin.cfg.reject.mismatch) { return next(DENY, 'HELO host ' + msg); }
+    if (!plugin.cfg.reject.host_mismatch) return next();
 
-    return next();
+    return next(DENY, 'HELO host ' + msg);
 };
 
 exports.valid_hostname = function (next, connection, helo) {
@@ -199,7 +200,7 @@ exports.match_re = function (next, connection, helo) {
 
     if (plugin.should_skip(connection, 'match_re')) { return next(); }
 
-    if (plugin.cfg.list_re.test(helo)) {
+    if (plugin.cfg.list_re && plugin.cfg.list_re.test(helo)) {
         connection.results.add(plugin, {fail: 'match_re'});
         if (plugin.cfg.reject.match_re) {
             return next(DENY, "That HELO not allowed here");
@@ -225,7 +226,7 @@ exports.rdns_match = function (next, connection, helo) {
         return next();
     }
 
-    var r_host = connection.remote_host;
+    var r_host = connection.remote.host;
     if (r_host && helo === r_host) {
         connection.results.add(plugin, {pass: 'rdns_match'});
         return next();
@@ -279,7 +280,7 @@ exports.dynamic = function (next, connection, helo) {
         return next();
     }
 
-    if (net_utils.is_ip_in_str(connection.remote_ip, helo)) {
+    if (net_utils.is_ip_in_str(connection.remote.ip, helo)) {
         connection.results.add(plugin, {fail: 'dynamic'});
         if (plugin.cfg.reject.dynamic) {
             return next(DENY, 'HELO is dynamic');
@@ -311,7 +312,7 @@ exports.big_company = function (next, connection, helo) {
         return next();
     }
 
-    var rdns = connection.remote_host;
+    var rdns = connection.remote.host;
     if (!rdns || rdns === 'Unknown' || rdns === 'DNSERROR') {
         connection.results.add(plugin, {fail: 'big_co(rDNS)'});
         if (plugin.cfg.reject.big_company) {
@@ -355,7 +356,7 @@ exports.literal_mismatch = function (next, connection, helo) {
     }
 
     if (lmm_mode > 1) {
-        if (net_utils.same_ipv4_network(connection.remote_ip, [helo_ip])) {
+        if (net_utils.same_ipv4_network(connection.remote.ip, [helo_ip])) {
             connection.results.add(plugin, {pass: 'literal_mismatch'});
             return next();
         }
@@ -367,7 +368,7 @@ exports.literal_mismatch = function (next, connection, helo) {
         return next();
     }
 
-    if (helo_ip === connection.remote_ip) {
+    if (helo_ip === connection.remote.ip) {
         connection.results.add(plugin, {pass: 'literal_mismatch'});
         return next();
     }
@@ -421,7 +422,7 @@ exports.forward_dns = function (next, connection, helo) {
         }
         connection.results.add(plugin, {ips: ips});
 
-        if (ips.indexOf(connection.remote_ip) !== -1) {
+        if (ips.indexOf(connection.remote.ip) !== -1) {
             connection.results.add(plugin, {pass: 'forward_dns'});
             return next();
         }
@@ -432,7 +433,7 @@ exports.forward_dns = function (next, connection, helo) {
         // the same domain, consider it close enough.
         if (connection.results.has('helo.checks', 'pass', /^rdns_match/)) {
             var helo_od = tlds.get_organizational_domain(helo);
-            var rdns_od = tlds.get_organizational_domain(connection.remote_host);
+            var rdns_od = tlds.get_organizational_domain(connection.remote.host);
             if (helo_od && helo_od === rdns_od) {
                 connection.results.add(plugin, {pass: 'forward_dns(domain)'});
                 return next();

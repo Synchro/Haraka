@@ -1,8 +1,7 @@
 // log our denys
-/* jshint multistr: true */
 
 var urlp  = require('url');
-var utils = require('./utils');
+var utils = require('haraka-utils');
 
 var db;
 var select = "SELECT COUNT(*) AS hits, plugin FROM graphdata WHERE timestamp >= ? AND timestamp < ? GROUP BY plugin";
@@ -12,7 +11,7 @@ var config;
 
 var width = 800;
 
-function createTable() {
+function createTable () {
     db.exec( "CREATE TABLE IF NOT EXISTS graphdata (timestamp INTEGER NOT NULL, plugin TEXT NOT NULL)")
       .exec( "CREATE INDEX IF NOT EXISTS graphdata_idx ON graphdata (timestamp)");
 }
@@ -216,7 +215,7 @@ exports.get_data = function (res, earliest, today, group_by) {
     },
     function (err, rows ) {
         write_to(utils.ISODate(new Date(next_stop)) + ',' +
-            utils.sort_keys(plugins).map(function(i) {
+            utils.sort_keys(plugins).map(function (i) {
                 return 1000 * 60 * (aggregate[i]/group_by);
             }).join(',')
         );
@@ -224,7 +223,7 @@ exports.get_data = function (res, earliest, today, group_by) {
             return res.end();
         }
         else {
-            return process.nextTick(function () {
+            return setImmediate(function () {
                 plugin.get_data(res, next_stop, today, group_by);
             });
         }

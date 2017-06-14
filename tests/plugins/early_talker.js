@@ -11,7 +11,7 @@ var _set_up = function (done) {
     done();
 };
 
-function _tear_down(done) { done(); }
+function _tear_down (done) { done(); }
 
 exports.early_talker = {
     setUp : _set_up,
@@ -74,7 +74,7 @@ exports.early_talker = {
         }.bind(this);
         this.plugin.pause = 1000;
         this.plugin.whitelist = this.plugin.load_ip_list(['127.0.0.1']);
-        this.connection.remote_ip = '127.0.0.1';
+        this.connection.remote.ip = '127.0.0.1';
         this.connection.early_talker = true;
         this.plugin.early_talker(next, this.connection);
     },
@@ -88,7 +88,7 @@ exports.early_talker = {
         }.bind(this);
         this.plugin.pause = 1000;
         this.plugin.whitelist = this.plugin.load_ip_list(['127.0.0.0/16']);
-        this.connection.remote_ip = '127.0.0.88';
+        this.connection.remote.ip = '127.0.0.88';
         this.connection.early_talker = true;
         this.plugin.early_talker(next, this.connection);
     },

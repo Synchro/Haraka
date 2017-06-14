@@ -1,7 +1,6 @@
 // dnsbl plugin
-var net_utils = require('./net_utils');
 
-exports.register = function() {
+exports.register = function () {
     var plugin = this;
     plugin.inherits('dns_list_base');
 
@@ -73,10 +72,9 @@ exports.should_skip = function (connection) {
     var plugin = this;
 
     if (!connection) { return true; }
-    var rip = connection.remote_ip;
 
-    if (net_utils.is_private_ip(rip)) {
-        connection.logdebug(plugin, 'skipping private IP: ' + rip);
+    if (connection.remote.is_private) {
+        connection.logdebug(plugin, 'skip private: ' + connection.remote.ip);
         return true;
     }
 
@@ -88,9 +86,9 @@ exports.should_skip = function (connection) {
     return false;
 };
 
-exports.connect_first = function(next, connection) {
+exports.connect_first = function (next, connection) {
     var plugin = this;
-    var remote_ip = connection.remote_ip;
+    var remote_ip = connection.remote.ip;
 
     if (plugin.should_skip(connection)) { return next(); }
 
@@ -113,9 +111,9 @@ exports.connect_first = function(next, connection) {
     });
 };
 
-exports.connect_multi = function(next, connection) {
+exports.connect_multi = function (next, connection) {
     var plugin = this;
-    var remote_ip = connection.remote_ip;
+    var remote_ip = connection.remote.ip;
 
     if (plugin.should_skip(connection)) { return next(); }
 
