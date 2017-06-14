@@ -265,7 +265,7 @@ Body.prototype.parse_end = function (line) {
     this.body_encoding = enc;
 
     // ignore these lines - but we could store somewhere I guess.
-    if (!this.body_text_encoded.length) return this._empty_filter(ct, enc); // nothing to decode
+    if (!this.body_text_encoded.length) return this._empty_filter(ct, enc) + line; // nothing to decode
     if (this.bodytext.length !== 0) return line;     // already decoded?
 
     var buf = this.decode_function(this.body_text_encoded);
@@ -282,7 +282,7 @@ Body.prototype.parse_end = function (line) {
 
         // convert back to base_64 or QP if required:
         if (this.decode_function === this.decode_qp) {
-            line = utils.encode_qp(new_buf.toString("binary")) + "\n" + line;
+            line = utils.encode_qp(new_buf.toString("utf8")) + "\n" + line;
         }
         else if (this.decode_function === this.decode_base64) {
             line = new_buf.toString("base64").replace(/(.{1,76})/g, "$1\n") + line;
@@ -320,7 +320,7 @@ Body.prototype.try_iconv = function(buf, enc) {
     catch (err) {
         logger.logwarn("initial iconv conversion from " + enc + " to UTF-8 failed: " + err.message);
         this.body_encoding = 'broken//' + enc;
-        // EINVAL is returned when the encoding type is not recognised/supported (e.g. ANSI_X3)
+        // EINVAL is returned when the encoding type is not recognized/supported (e.g. ANSI_X3)
         if (err.code !== 'EINVAL') {
             // Perform the conversion again, but ignore any errors
             try {
